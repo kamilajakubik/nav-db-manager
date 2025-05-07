@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class DataCycle(models.Model):
     cycle_id = models.CharField(max_length=10, primary_key=True)
     effective_date = models.DateField()
@@ -8,6 +9,9 @@ class DataCycle(models.Model):
 
     class Meta:
         ordering = ['-effective_date']
+
+    def __str__(self):
+        return f"{self.cycle_id} ({self.effective_date} -> {self.expiry_date})"
 
 class Coordinates(models.Model):
     latitude = models.DecimalField(max_digits=11, decimal_places=8)
