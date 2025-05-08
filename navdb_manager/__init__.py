@@ -1,3 +1,3 @@
 from .celery import celery
 
-__all__ = ('celery',)
+__all__ = ("celery",)

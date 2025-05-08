@@ -1,0 +1,31 @@
+line-length = 120
+src = ["."]
+exclude = [".venv", "migrations", "__pycache__", "manage.py"]
+fix = true
+
+[lint]
+select = [
+    "E",     # pycodestyle
+    "F",     # pyflakes
+    "B",     # flake8-bugbear
+    "I",     # isort
+    "DJ",    # flake8-django
+    "D",     # pydocstyle
+    "C90",   # mccabe
+    "Q",     # flake8-quotes
+]
+ignore = [
+    "D100",  # missing docstring in public module
+    "D101",  # missing docstring in public class
+    "D102",  # missing docstring in public method
+    "D203",  # ignore: incompatible with D211
+    "D213",  # ignore: incompatible with D212
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.flake8-quotes]
+inline-quotes = "double"
+multiline-quotes = "double"
+docstring-quotes = "double"
