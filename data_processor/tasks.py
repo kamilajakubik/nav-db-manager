@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 @shared_task
 def process_arinc_file(file_id):
+    arinc_file = None
     try:
         arinc_file = ArincFile.objects.get(id=file_id)
         arinc_file.status = "PROCESSING"
@@ -42,15 +43,11 @@ def process_arinc_file(file_id):
 
         arinc_file.status = "COMPLETED"
         arinc_file.save()
-
         return f"Successfully processed file {arinc_file.file.name}"
-
     except Exception as e:
         logger.error(f"Error processing file {file_id}: {str(e)}")
-
         if arinc_file:
             arinc_file.status = "FAILED"
             arinc_file.processing_errors = {"error": str(e)}
             arinc_file.save()
-
         raise

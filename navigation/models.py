@@ -30,7 +30,7 @@ class Airport(Coordinates):
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=2, null=True, blank=True)
     country = models.CharField(max_length=2)
-    elevation = models.IntegerField()  # In feet
+    elevation = models.IntegerField(help_text="Elevation in feet")
     magnetic_variation = models.CharField(max_length=5)
     transition_altitude = models.IntegerField(null=True, blank=True)
     transition_level = models.IntegerField(null=True, blank=True)
@@ -58,11 +58,11 @@ class Navaid(Coordinates):
     name = models.CharField(max_length=100)
     navaid_type = models.CharField(max_length=10, choices=NAVAID_TYPES)
     frequency = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True)
-    elevation = models.IntegerField(null=True, blank=True)  # In feet
+    elevation = models.IntegerField(null=True, blank=True, help_text="Elevation in feet")
     magnetic_variation = models.CharField(max_length=5, null=True, blank=True)
     dme_latitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
     dme_longitude = models.DecimalField(max_digits=11, decimal_places=8, null=True, blank=True)
-    dme_elevation = models.IntegerField(null=True, blank=True)  # In feet
+    dme_elevation = models.IntegerField(null=True, blank=True, help_text="Elevation in feet")
     service_volume = models.CharField(max_length=10, null=True, blank=True)
 
     def __str__(self):
@@ -116,11 +116,14 @@ class AirwaySegment(models.Model):
     fix_type = models.CharField(max_length=10, choices=FIX_TYPES)
     next_fix_identifier = models.CharField(max_length=10, null=True, blank=True)
     next_fix_type = models.CharField(max_length=10, choices=FIX_TYPES, null=True, blank=True)
-    route_distance = models.IntegerField(null=True, blank=True)  # In nautical miles
-    minimum_altitude = models.IntegerField(null=True, blank=True)  # In feet
-    maximum_altitude = models.IntegerField(null=True, blank=True)  # In feet
+    route_distance = models.IntegerField(null=True, blank=True, help_text="Distance in nautical miles")
+    minimum_altitude = models.IntegerField(null=True, blank=True, help_text="Altitude in feet")
+    maximum_altitude = models.IntegerField(null=True, blank=True, help_text="Altitude in feet")
     magnetic_course = models.IntegerField(null=True, blank=True)
     reverse_magnetic_course = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["sequence_number"]
 
     def __str__(self):
         return f"{self.airway.airway_id} - segment {self.sequence_number}"

@@ -17,4 +17,3 @@ class FileViewSet(ModelViewSet):
         process_arinc_file.delay(arinc_file.id)
         serializer = ArincFileSerializer(arinc_file)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
