@@ -1,6 +1,9 @@
 import logging
 from xml.etree.ElementTree import Element
 
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
+
 from navigation.models import (
     Airport,
     Airway,
@@ -15,346 +18,250 @@ from navigation.models import (
 
 
 class ARINCParser:
-    def __init__(self, data_cycle: DataCycle):
+    """
+    Parse ARINC 424 XML data into Django models.
+
+    Attributes:
+        data_cycle (DataCycle): The current data cycle to associate parsed objects with.
+        logger (logging.Logger): Logger instance for logging parsing activities.
+    """
+
+    def __init__(self, data_cycle: DataCycle) -> None:
         self.data_cycle = data_cycle
         self.logger = logging.getLogger(__name__)
 
-    def parse_file(self, root: Element):
-        """Parse the ARINC 424 XML file.
+    def parse_file(self, root: Element) -> None:
+        """
+        Parse the ARINC 424 XML file within a DB transaction.
+
+        Rolls back the whole parsing operation if any step fails.
 
         Args:
-            root: The root element of the XML document.
-
-        Raises:
-            ValueError: If required elements are missing or malformed.
-
+            root (Element): Root XML element of the file.
         """
-        self._parse_airports(root.find("AIRPORTS"))
-        self._parse_navaids(root.find("NAVAIDS"))
-        self._parse_waypoints(root.find("WAYPOINTS"))
-        self._parse_airways(root.find("AIRWAYS"))
-        self._parse_procedures(root.find("PROCEDURES"))
+        with transaction.atomic:
+            try:
+                self._parse_airports(root.find("AIRPORTS"))
+                self._parse_navaids(root.find("NAVAIDS"))
+                self._parse_waypoints(root.find("WAYPOINTS"))
+                self._parse_airways(root.find("AIRWAYS"))
+                self._parse_procedures(root.find("PROCEDURES"))
+            except Exception as e:
+                self.logger.error("Parsing failed — rolling back transaction.")
+                raise  # Re-raise to trigger rollback
 
-    def _parse_airports(self, airports_element: Element):
-        """Parse airport data from the XML.
+    def _get_text(self, parent: Element, tag: str) -> str | None:
+        """Extract text from an XML element's child tag, if available."""
+        element = parent.find(tag)
+        return element.text.strip() if element is not None and element.text else None
 
-        Args:
-            airports_element: The XML element containing airport data.
-        """
+    def _get_float(self, parent: Element, tag: str) -> str | None:
+        """Extract a float from an XML tag, if available."""
+        try:
+            text = self._get_text(parent, tag)
+            return float(text) if text is not None else None
+        except ValueError:
+            self.logger.warning(f"Invalid float value for tag '{tag}'")
+            return None
+
+    def _get_int(self, parent: Element, tag: str) -> str | None:
+        """Extract an int from an XML tag, if available."""
+        try:
+            text = self._get_text(parent, tag)
+            return int(text) if text is not None else None
+        except ValueError:
+            self.logger.warning(f"Invalid integer value for tag '{tag}'")
+            return None
+
+    def _parse_airports(self, airports_element: Element | None) -> None:
         if airports_element is None:
-            self.logger.warning("No airports element found in the XML file")
+            self.logger.warning("No airports element found")
             return
 
-        self.logger.info("Parsing airport elements...")
+        self.logger.info("Parsing airports...")
         for airport_elem in airports_element.findall("AIRPORT"):
-            airport_id = airport_elem.find("AIRPORT_IDENTIFIER").text
+            airport_id = self._get_text(airport_elem, "AIRPORT_IDENTIFIER")
+            if not airport_id:
+                continue
+
             try:
-                airport, created = Airport.objects.get_or_create(
+                Airport.objects.create(
                     cycle=self.data_cycle,
                     airport_id=airport_id,
                     defaults={
-                        "icao_code": airport_elem.find("ICAO_CODE").text,
-                        "name": airport_elem.find("AIRPORT_NAME").text,
-                        "city": airport_elem.find("CITY_NAME").text,
-                        "state": airport_elem.find("STATE_CODE").text
-                        if airport_elem.find("STATE_CODE") is not None
-                        else None,
-                        "country": airport_elem.find("COUNTRY_CODE").text,
-                        "latitude": float(airport_elem.find(".//LATITUDE").text),
-                        "longitude": float(airport_elem.find(".//LONGITUDE").text),
-                        "elevation": int(airport_elem.find("ELEVATION").text),
-                        "magnetic_variation": airport_elem.find("MAGNETIC_VARIATION").text,
-                        "transition_altitude": int(airport_elem.find("TRANSITION_ALTITUDE").text)
-                        if airport_elem.find("TRANSITION_ALTITUDE") is not None
-                        else None,
-                        "transition_level": int(airport_elem.find("TRANSITION_LEVEL").text)
-                        if airport_elem.find("TRANSITION_LEVEL") is not None
-                        else None,
-                        "longest_runway": int(airport_elem.find("LONGEST_RUNWAY").text)
-                        if airport_elem.find("LONGEST_RUNWAY") is not None
-                        else None,
+                        "icao_code": self._get_text(airport_elem, "ICAO_CODE"),
+                        "name": self._get_text(airport_elem, "AIRPORT_NAME"),
+                        "city": self._get_text(airport_elem, "CITY_NAME"),
+                        "state": self._get_text(airport_elem, "STATE_CODE"),
+                        "country": self._get_text(airport_elem, "COUNTRY_CODE"),
+                        "latitude": self._get_float(airport_elem, ".//LATITUDE"),
+                        "longitude": self._get_float(airport_elem, ".//LONGITUDE"),
+                        "elevation": self._get_int(airport_elem, "ELEVATION"),
+                        "magnetic_variation": self._get_text(airport_elem, "MAGNETIC_VARIATION"),
+                        "transition_altitude": self._get_int(airport_elem, "TRANSITION_ALTITUDE"),
+                        "transition_level": self._get_int(airport_elem, "TRANSITION_LEVEL"),
+                        "longest_runway": self._get_int(airport_elem, "LONGEST_RUNWAY"),
                     },
                 )
-            except Exception:
-                self.logger.error(f"Unable to parse data for airport {airport_id}")
-        self.logger.info("Parsing airports finished")
+            except Exception as e:
+                self.logger.error(f"Failed to parse airport '{airport_id}': {e}")
+                raise Exception(f"{type(e).__name__} occurred during parsing: {e}")
+        self.logger.info("Finished parsing airports")
 
-    def _parse_navaids(self, navaids_element: Element):
+    def _parse_navaids(self, navaids_element: Element | None) -> None:
         if navaids_element is None:
-            self.logger.warning("No navaids element found in the XML file")
+            self.logger.warning("No navaids element found")
             return
 
-        self.logger.info("Parsing navaids elements...")
+        self.logger.info("Parsing navaids...")
         for navaid_elem in navaids_element.findall("NAVAID"):
-            navaid_id = navaid_elem.find("NAVAID_IDENTIFIER").text
+            navaid_id = self._get_text(navaid_elem, "NAVAID_IDENTIFIER")
+            if not navaid_id:
+                continue
+
             try:
-                navaid, created = Navaid.objects.get_or_create(
+                Navaid.objects.create(
                     cycle=self.data_cycle,
                     navaid_id=navaid_id,
                     defaults={
-                        "name": navaid_elem.find("NAVAID_NAME").text,
-                        "navaid_type": navaid_elem.find("NAVAID_TYPE").text,
-                        "frequency": float(navaid_elem.find("NAVAID_FREQUENCY").text)
-                        if navaid_elem.find("NAVAID_FREQUENCY") is not None
-                        else None,
-                        "latitude": float(navaid_elem.find(".//LATITUDE").text),
-                        "longitude": float(navaid_elem.find(".//LONGITUDE").text),
-                        "elevation": int(navaid_elem.find("ELEVATION").text)
-                        if navaid_elem.find("ELEVATION") is not None
-                        else None,
-                        "magnetic_variation": navaid_elem.find("MAGNETIC_VARIATION").text
-                        if navaid_elem.find("MAGNETIC_VARIATION") is not None
-                        else None,
-                        "dme_position_latitude": float(navaid_elem.find(".//DME_POSITION/LATITUDE").text)
-                        if navaid_elem.find(".//DME_POSITION") is not None
-                        else None,
-                        "dme_position_longitude": float(navaid_elem.find(".//DME_POSITION/LONGITUDE").text)
-                        if navaid_elem.find(".//DME_POSITION") is not None
-                        else None,
-                        "dme_elevation": int(navaid_elem.find(".//DME_POSITION/ELEVATION").text)
-                        if navaid_elem.find(".//DME_POSITION/ELEVATION") is not None
-                        else None,
-                        "service_volume": navaid_elem.find("SERVICE_VOLUME").text
-                        if navaid_elem.find("SERVICE_VOLUME") is not None
-                        else None,
+                        "name": self._get_text(navaid_elem, "NAVAID_NAME"),
+                        "navaid_type": self._get_text(navaid_elem, "NAVAID_TYPE"),
+                        "frequency": self._get_float(navaid_elem, "NAVAID_FREQUENCY"),
+                        "latitude": self._get_float(navaid_elem, ".//LATITUDE"),
+                        "longitude": self._get_float(navaid_elem, ".//LONGITUDE"),
+                        "elevation": self._get_int(navaid_elem, "ELEVATION"),
+                        "magnetic_variation": self._get_text(navaid_elem, "MAGNETIC_VARIATION"),
+                        "dme_latitude": self._get_float(navaid_elem, ".//DME_POSITION/LATITUDE"),
+                        "dme_longitude": self._get_float(navaid_elem, ".//DME_POSITION/LONGITUDE"),
+                        "dme_elevation": self._get_int(navaid_elem, ".//DME_POSITION/ELEVATION"),
+                        "service_volume": self._get_text(navaid_elem, "SERVICE_VOLUME"),
                     },
                 )
-            except Exception:
-                self.logger.error(f"Unable to parse data for navaid {navaid_id}")
-        self.logger.info("Parsing navaids finished")
+            except Exception as e:
+                self.logger.error(f"Failed to parse navaid '{navaid_id}': {e}")
+                raise Exception(f"{type(e).__name__} occurred during parsing: {e}")
+        self.logger.info("Finished parsing navaids")
 
-    def _parse_waypoints(self, waypoints_element: Element):
+    def _parse_waypoints(self, waypoints_element: Element | None) -> None:
         if waypoints_element is None:
-            self.logger.warning("No waypoints element found in the XML file")
+            self.logger.warning("No waypoints element found")
             return
 
-        self.logger.info("Parsing waypoints elements...")
+        self.logger.info("Parsing waypoints...")
         for waypoint_elem in waypoints_element.findall("WAYPOINT"):
-            waypoint_id = waypoint_elem.find("WAYPOINT_IDENTIFIER").text
+            waypoint_id = self._get_text(waypoint_elem, "WAYPOINT_IDENTIFIER")
+            if not waypoint_id:
+                continue
+
             try:
-                waypoint, created = Waypoint.objects.get_or_create(
+                Waypoint.objects.create(
                     cycle=self.data_cycle,
                     waypoint_id=waypoint_id,
                     defaults={
-                        "name": waypoint_elem.find("WAYPOINT_NAME").text,
-                        "waypoint_type": waypoint_elem.find("WAYPOINT_TYPE").text,
-                        "latitude": float(waypoint_elem.find(".//LATITUDE").text),
-                        "longitude": float(waypoint_elem.find(".//LONGITUDE").text),
-                        "airspace_classification": waypoint_elem.find("AIRSPACE_CLASSIFICATION").text
-                        if waypoint_elem.find("AIRSPACE_CLASSIFICATION") is not None
-                        else None,
+                        "name": self._get_text(waypoint_elem, "WAYPOINT_NAME"),
+                        "waypoint_type": self._get_text(waypoint_elem, "WAYPOINT_TYPE"),
+                        "latitude": self._get_float(waypoint_elem, ".//LATITUDE"),
+                        "longitude": self._get_float(waypoint_elem, ".//LONGITUDE"),
+                        "airspace_classification": self._get_text(waypoint_elem, "AIRSPACE_CLASSIFICATION"),
                     },
                 )
-            except Exception:
-                self.logger.error(f"Unable to parse data for waypoint {waypoint_id}")
-        self.logger.info("Parsing waypoints finished")
+            except Exception as e:
+                self.logger.error(f"Failed to parse waypoint '{waypoint_id}': {e}")
+                raise Exception(f"{type(e).__name__} occurred during parsing: {e}")
+        self.logger.info("Finished parsing waypoints")
 
-    def _parse_airways(self, airways_element: Element):
+    def _parse_airways(self, airways_element: Element | None) -> None:
         if airways_element is None:
-            self.logger.warning("No airways element found in the XML file")
+            self.logger.warning("No airways element found")
             return
 
-        self.logger.info("Parsing airways elements...")
+        self.logger.info("Parsing airways...")
         for airway_elem in airways_element.findall("AIRWAY"):
-            airway_id = airway_elem.find("ROUTE_IDENTIFIER").text
+            airway_id = self._get_text(airway_elem, "ROUTE_IDENTIFIER")
+            if not airway_id:
+                continue
+
             try:
-                airway, created = Airway.objects.get_or_create(
+                airway = Airway.objects.create(
                     cycle=self.data_cycle,
                     airway_id=airway_id,
-                    defaults={
-                        "route_type": airway_elem.find("ROUTE_TYPE").text,
-                    },
+                    defaults={"route_type": self._get_text(airway_elem, "ROUTE_TYPE")},
                 )
 
-                # Create the airway segment
-                sequence_number = int(airway_elem.find("SEQUENCE_NUMBER").text)
-                segment, created = AirwaySegment.objects.get_or_create(
-                    airway=airway,
-                    sequence_number=sequence_number,
-                    defaults={
-                        "fix_identifier": airway_elem.find("FIX_IDENTIFIER").text,
-                        "fix_type": airway_elem.find("FIX_TYPE").text,
-                        "next_fix_identifier": airway_elem.find("NEXT_FIX_IDENTIFIER").text
-                        if airway_elem.find("NEXT_FIX_IDENTIFIER") is not None
-                        else None,
-                        "next_fix_type": airway_elem.find("NEXT_FIX_TYPE").text
-                        if airway_elem.find("NEXT_FIX_TYPE") is not None
-                        else None,
-                        "route_distance": int(airway_elem.find("ROUTE_DISTANCE").text)
-                        if airway_elem.find("ROUTE_DISTANCE") is not None
-                        else None,
-                        "minimum_altitude": int(airway_elem.find("MINIMUM_ALTITUDE").text)
-                        if airway_elem.find("MINIMUM_ALTITUDE") is not None
-                        else None,
-                        "maximum_altitude": int(airway_elem.find("MAXIMUM_ALTITUDE").text)
-                        if airway_elem.find("MAXIMUM_ALTITUDE") is not None
-                        else None,
-                        "magnetic_course": int(airway_elem.find("MAGNETIC_COURSE").text)
-                        if airway_elem.find("MAGNETIC_COURSE") is not None
-                        else None,
-                        "reverse_magnetic_course": int(airway_elem.find("REVERSE_MAGNETIC_COURSE").text)
-                        if airway_elem.find("REVERSE_MAGNETIC_COURSE") is not None
-                        else None,
-                    },
-                )
-            except Exception:
-                self.logger.error(f"Unable to parse data for airway {airway_id}")
-        self.logger.info("Parsing airways finished")
+                sequence_number = self._get_int(airway_elem, "SEQUENCE_NUMBER")
+                if sequence_number is not None:
+                    AirwaySegment.objects.create(
+                        airway=airway,
+                        sequence_number=sequence_number,
+                        defaults={
+                            "fix_identifier": self._get_text(airway_elem, "FIX_IDENTIFIER"),
+                            "fix_type": self._get_text(airway_elem, "FIX_TYPE"),
+                            "next_fix_identifier": self._get_text(airway_elem, "NEXT_FIX_IDENTIFIER"),
+                            "next_fix_type": self._get_text(airway_elem, "NEXT_FIX_TYPE"),
+                            "route_distance": self._get_int(airway_elem, "ROUTE_DISTANCE"),
+                            "minimum_altitude": self._get_int(airway_elem, "MINIMUM_ALTITUDE"),
+                            "maximum_altitude": self._get_int(airway_elem, "MAXIMUM_ALTITUDE"),
+                            "magnetic_course": self._get_int(airway_elem, "MAGNETIC_COURSE"),
+                            "reverse_magnetic_course": self._get_int(airway_elem, "REVERSE_MAGNETIC_COURSE"),
+                        },
+                    )
+            except Exception as e:
+                self.logger.error(f"Failed to parse airway '{airway_id}': {e}")
+                raise Exception(f"{type(e).__name__} occurred during parsing: {e}")
+        self.logger.info("Finished parsing airways")
 
-    def _parse_procedures(self, procedures_element: Element):
+    def _parse_procedures(self, procedures_element: Element | None) -> None:
         if procedures_element is None:
-            self.logger.warning("No procedures element found in the XML file")
+            self.logger.warning("No procedures element found")
             return
 
-        # Process approaches
-        self.logger.info("Parsing approaches elements...")
-        for approach_elem in procedures_element.findall("APPROACH"):
-            airport_id = approach_elem.find("AIRPORT_IDENTIFIER").text
-            procedure_id = approach_elem.find("PROCEDURE_IDENTIFIER").text
+        self._parse_procedure_type(procedures_element, "APPROACH")
+        self._parse_procedure_type(procedures_element, "SID")
+        self._parse_procedure_type(procedures_element, "STAR")
+
+    def _parse_procedure_type(self, parent_element: Element, tag_name: str) -> None:
+        """Parse procedures of a specific type: APPROACH, SID, STAR."""
+        self.logger.info(f"Parsing {tag_name}s...")
+        for proc_elem in parent_element.findall(tag_name):
+            airport_id = self._get_text(proc_elem, "AIRPORT_IDENTIFIER")
+            procedure_id = self._get_text(proc_elem, "PROCEDURE_IDENTIFIER")
+            if not airport_id or not procedure_id:
+                continue
 
             try:
                 airport = Airport.objects.get(cycle=self.data_cycle, airport_id=airport_id)
 
-                # Create the procedure
-                procedure, created = Procedure.objects.get_or_create(
+                procedure = Procedure.objects.create(
                     cycle=self.data_cycle,
                     airport=airport,
                     procedure_id=procedure_id,
-                    defaults={
-                        "procedure_type": "APPROACH",
-                    },
+                    defaults={"procedure_type": tag_name},
                 )
 
-                # Create the transition
-                transition_id = approach_elem.find("TRANSITION_IDENTIFIER").text
-                transition, created = ProcedureTransition.objects.get_or_create(
-                    procedure=procedure, transition_id=transition_id
-                )
+                transition_id = self._get_text(proc_elem, "TRANSITION_IDENTIFIER")
+                transition = ProcedureTransition.objects.create(procedure=procedure, transition_id=transition_id)
 
-                # Create the leg
-                sequence_number = int(approach_elem.find("SEQUENCE_NUMBER").text)
-                waypoint_identifier = approach_elem.find("WAYPOINT_IDENTIFIER").text
+                sequence_number = self._get_int(proc_elem, "SEQUENCE_NUMBER")
+                waypoint_identifier = self._get_text(proc_elem, "WAYPOINT_IDENTIFIER")
 
-                leg, created = ProcedureLeg.objects.get_or_create(
-                    transition=transition,
-                    sequence_number=sequence_number,
-                    defaults={
-                        "waypoint_identifier": waypoint_identifier,
-                        "waypoint_type": approach_elem.find("WAYPOINT_TYPE").text,
-                        "latitude": float(approach_elem.find(".//LATITUDE").text)
-                        if approach_elem.find(".//POSITION") is not None
-                        else None,
-                        "longitude": float(approach_elem.find(".//LONGITUDE").text)
-                        if approach_elem.find(".//POSITION") is not None
-                        else None,
-                        "altitude_constraint": approach_elem.find("ALTITUDE_CONSTRAINT").text
-                        if approach_elem.find("ALTITUDE_CONSTRAINT") is not None
-                        else None,
-                        "speed_constraint": approach_elem.find("SPEED_CONSTRAINT").text
-                        if approach_elem.find("SPEED_CONSTRAINT") is not None
-                        else None,
-                        "course": int(approach_elem.find("COURSE").text)
-                        if approach_elem.find("COURSE") is not None
-                        else None,
-                        "distance": float(approach_elem.find("DISTANCE").text)
-                        if approach_elem.find("DISTANCE") is not None
-                        else None,
-                    },
-                )
-            except Airport.DoesNotExist:
-                self.logger.error(f"Airport with identifier {airport_id} not found!")
-            self.logger.info("Parsing approaches finished")
-
-            # Process SIDs
-            self.logger.info("Parsing SIDs elements...")
-            for sid_elem in procedures_element.findall("SID"):
-                airport_id = sid_elem.find("AIRPORT_IDENTIFIER").text
-                procedure_id = sid_elem.find("PROCEDURE_IDENTIFIER").text
-
-                try:
-                    airport = Airport.objects.get(cycle=self.data_cycle, airport_id=airport_id)
-
-                    # Create the procedure
-                    procedure, created = Procedure.objects.get_or_create(
-                        cycle=self.data_cycle,
-                        airport=airport,
-                        procedure_id=procedure_id,
-                        defaults={
-                            "procedure_type": "SID",
-                        },
-                    )
-
-                    # Create the transition
-                    transition_id = sid_elem.find("TRANSITION_IDENTIFIER").text
-                    transition, created = ProcedureTransition.objects.get_or_create(
-                        procedure=procedure, transition_id=transition_id
-                    )
-
-                    # Create the leg
-                    sequence_number = int(sid_elem.find("SEQUENCE_NUMBER").text)
-                    waypoint_identifier = sid_elem.find("WAYPOINT_IDENTIFIER").text
-
-                    leg, created = ProcedureLeg.objects.get_or_create(
+                if sequence_number is not None and waypoint_identifier:
+                    ProcedureLeg.objects.create(
                         transition=transition,
                         sequence_number=sequence_number,
                         defaults={
                             "waypoint_identifier": waypoint_identifier,
-                            "waypoint_type": sid_elem.find("WAYPOINT_TYPE").text,
-                            "altitude_constraint": sid_elem.find("ALTITUDE_CONSTRAINT").text
-                            if sid_elem.find("ALTITUDE_CONSTRAINT") is not None
-                            else None,
-                            "speed_constraint": sid_elem.find("SPEED_CONSTRAINT").text
-                            if sid_elem.find("SPEED_CONSTRAINT") is not None
-                            else None,
+                            "waypoint_type": self._get_text(proc_elem, "WAYPOINT_TYPE"),
+                            "latitude": self._get_float(proc_elem, ".//POSITION/LATITUDE"),
+                            "longitude": self._get_float(proc_elem, ".//POSITION/LONGITUDE"),
+                            "altitude_constraint": self._get_text(proc_elem, "ALTITUDE_CONSTRAINT"),
+                            "speed_constraint": self._get_text(proc_elem, "SPEED_CONSTRAINT"),
+                            "course": self._get_int(proc_elem, "COURSE"),
+                            "distance": self._get_float(proc_elem, "DISTANCE"),
                         },
                     )
-                except Airport.DoesNotExist:
-                    self.logger.error(f"Airport with identifier {airport_id} not found!")
-                self.logger.info("Parsing SIDs finished")
-
-            # Process STARs
-            self.logger.info("Parsing STARs elements...")
-            for star_elem in procedures_element.findall("STAR"):
-                airport_id = star_elem.find("AIRPORT_IDENTIFIER").text
-                procedure_id = star_elem.find("PROCEDURE_IDENTIFIER").text
-
-                try:
-                    airport = Airport.objects.get(cycle=self.data_cycle, airport_id=airport_id)
-
-                    # Create the procedure
-                    procedure, created = Procedure.objects.get_or_create(
-                        cycle=self.data_cycle,
-                        airport=airport,
-                        procedure_id=procedure_id,
-                        defaults={
-                            "procedure_type": "STAR",
-                        },
-                    )
-
-                    # Create the transition
-                    transition_id = star_elem.find("TRANSITION_IDENTIFIER").text
-                    transition, created = ProcedureTransition.objects.get_or_create(
-                        procedure=procedure, transition_id=transition_id
-                    )
-
-                    # Create the leg
-                    sequence_number = int(star_elem.find("SEQUENCE_NUMBER").text)
-                    waypoint_identifier = star_elem.find("WAYPOINT_IDENTIFIER").text
-
-                    leg, created = ProcedureLeg.objects.get_or_create(
-                        transition=transition,
-                        sequence_number=sequence_number,
-                        defaults={
-                            "waypoint_identifier": waypoint_identifier,
-                            "waypoint_type": star_elem.find("WAYPOINT_TYPE").text,
-                            "altitude_constraint": star_elem.find("ALTITUDE_CONSTRAINT").text
-                            if star_elem.find("ALTITUDE_CONSTRAINT") is not None
-                            else None,
-                            "speed_constraint": star_elem.find("SPEED_CONSTRAINT").text
-                            if star_elem.find("SPEED_CONSTRAINT") is not None
-                            else None,
-                        },
-                    )
-                except Airport.DoesNotExist:
-                    self.logger.error(f"Airport with identifier {airport_id} not found!")
-                self.logger.info("Parsing STARs finished")
+            except ObjectDoesNotExist:
+                self.logger.error(f"{tag_name}: Airport '{airport_id}' not found.")
+            except Exception as e:
+                self.logger.error(f"Failed to parse {tag_name} for airport '{airport_id}': {e}")
+                raise Exception(f"{type(e).__name__} occurred during parsing: {e}")
+        self.logger.info(f"Finished parsing {tag_name}s")
