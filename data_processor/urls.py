@@ -4,6 +4,6 @@ from . import views
 
 
 router = routers.DefaultRouter()
-router.register("upload", views.FileViewSet)
+router.register("upload", views.FileViewSet, basename="upload")
 
 urlpatterns = router.urls

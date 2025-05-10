@@ -39,7 +39,7 @@ class ARINCParser:
         Args:
             root (Element): Root XML element of the file.
         """
-        with transaction.atomic:
+        with transaction.atomic():
             try:
                 self._parse_airports(root.find("AIRPORTS"))
                 self._parse_navaids(root.find("NAVAIDS"))
@@ -85,7 +85,7 @@ class ARINCParser:
                 continue
 
             try:
-                Airport.objects.create(
+                Airport.objects.get_or_create(
                     cycle=self.data_cycle,
                     airport_id=airport_id,
                     defaults={
@@ -120,7 +120,7 @@ class ARINCParser:
                 continue
 
             try:
-                Navaid.objects.create(
+                Navaid.objects.get_or_create(
                     cycle=self.data_cycle,
                     navaid_id=navaid_id,
                     defaults={
@@ -154,7 +154,7 @@ class ARINCParser:
                 continue
 
             try:
-                Waypoint.objects.create(
+                Waypoint.objects.get_or_create(
                     cycle=self.data_cycle,
                     waypoint_id=waypoint_id,
                     defaults={
@@ -182,7 +182,7 @@ class ARINCParser:
                 continue
 
             try:
-                airway = Airway.objects.create(
+                airway = Airway.objects.get_or_create(
                     cycle=self.data_cycle,
                     airway_id=airway_id,
                     defaults={"route_type": self._get_text(airway_elem, "ROUTE_TYPE")},
@@ -190,7 +190,7 @@ class ARINCParser:
 
                 sequence_number = self._get_int(airway_elem, "SEQUENCE_NUMBER")
                 if sequence_number is not None:
-                    AirwaySegment.objects.create(
+                    AirwaySegment.objects.get_or_create(
                         airway=airway,
                         sequence_number=sequence_number,
                         defaults={
@@ -231,7 +231,7 @@ class ARINCParser:
             try:
                 airport = Airport.objects.get(cycle=self.data_cycle, airport_id=airport_id)
 
-                procedure = Procedure.objects.create(
+                procedure = Procedure.objects.get_or_create(
                     cycle=self.data_cycle,
                     airport=airport,
                     procedure_id=procedure_id,
@@ -239,13 +239,13 @@ class ARINCParser:
                 )
 
                 transition_id = self._get_text(proc_elem, "TRANSITION_IDENTIFIER")
-                transition = ProcedureTransition.objects.create(procedure=procedure, transition_id=transition_id)
+                transition = ProcedureTransition.objects.get_or_create(procedure=procedure, transition_id=transition_id)
 
                 sequence_number = self._get_int(proc_elem, "SEQUENCE_NUMBER")
                 waypoint_identifier = self._get_text(proc_elem, "WAYPOINT_IDENTIFIER")
 
                 if sequence_number is not None and waypoint_identifier:
-                    ProcedureLeg.objects.create(
+                    ProcedureLeg.objects.get_or_create(
                         transition=transition,
                         sequence_number=sequence_number,
                         defaults={
