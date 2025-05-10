@@ -15,10 +15,19 @@ from navigation.serializers import (
 )
 
 
-class AirportViewSet(ReadOnlyModelViewSet):
-    latest_cycle = DataCycle.objects.order_by("-effective_date").first()
-    queryset = Airport.objects.filter(cycle=latest_cycle).all()
+class LatestCycleQueryMixin:
+    def get_latest_cycle(self):
+        return DataCycle.objects.order_by("-effective_date").first()
+
+    def filter_by_latest_cycle(self, queryset):
+        return queryset.filter(cycle=self.get_latest_cycle())
+
+
+class AirportViewSet(LatestCycleQueryMixin, ReadOnlyModelViewSet):
     serializer_class = AirportSerializer
+
+    def get_queryset(self):
+        return self.filter_by_latest_cycle(Airport.objects.all())
 
     @action(detail=True, methods=["get"])
     def procedures(self, request, pk=None):
@@ -30,16 +39,18 @@ class AirportViewSet(ReadOnlyModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class NavaidViewSet(ReadOnlyModelViewSet):
-    latest_cycle = DataCycle.objects.order_by("-effective_date").first()
-    queryset = Navaid.objects.filter(cycle=latest_cycle).all()
+class NavaidViewSet(LatestCycleQueryMixin, ReadOnlyModelViewSet):
     serializer_class = NavaidSerializer
 
+    def get_queryset(self):
+        return self.filter_by_latest_cycle(Navaid.objects.all())
 
-class ProcedureViewSet(ReadOnlyModelViewSet):
-    latest_cycle = DataCycle.objects.order_by("-effective_date").first()
-    queryset = Procedure.objects.filter(cycle=latest_cycle).all()
+
+class ProcedureViewSet(LatestCycleQueryMixin, ReadOnlyModelViewSet):
     serializer_class = ProcedureSerializer
+
+    def get_queryset(self):
+        return self.filter_by_latest_cycle(Procedure.objects.all())
 
     @action(detail=True, methods=["get"])
     def legs(self, request, pk=None):
@@ -50,16 +61,18 @@ class ProcedureViewSet(ReadOnlyModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-class WaypointViewSet(ReadOnlyModelViewSet):
-    latest_cycle = DataCycle.objects.order_by("-effective_date").first()
-    queryset = Waypoint.objects.filter(cycle=latest_cycle).all()
+class WaypointViewSet(LatestCycleQueryMixin, ReadOnlyModelViewSet):
     serializer_class = WaypointSerializer
 
+    def get_queryset(self):
+        return self.filter_by_latest_cycle(Waypoint.objects.all())
 
-class AirwayViewSet(ReadOnlyModelViewSet):
-    latest_cycle = DataCycle.objects.order_by("-effective_date").first()
-    queryset = Airway.objects.filter(cycle=latest_cycle).all()
+
+class AirwayViewSet(LatestCycleQueryMixin, ReadOnlyModelViewSet):
     serializer_class = AirwaySerializer
+
+    def get_queryset(self):
+        return self.filter_by_latest_cycle(Airway.objects.all())
 
     @action(detail=True, methods=["get"])
     def segments(self, request, pk=None):
