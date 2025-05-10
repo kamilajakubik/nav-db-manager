@@ -3,3 +3,8 @@ djangorestframework==3.16.0
 django-environ==0.12.0
 celery==5.5.2
 redis==6.0.0
+pytest==8.3.5
+pytest-mock==3.14.0
+pytest-django==4.11.1
+serializers==0.2.4
+model-bakery==1.20.4
